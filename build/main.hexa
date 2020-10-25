@@ -1,0 +1,266 @@
+// The Tofita Kernel
+// Copyright (C) 2020  Oleg Petrenko
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, version 3 of the License.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+let fs = require('fs')
+
+// Removes folder recursively
+function deleteFolderRecursive(path, noRemoveSelf) {
+	if (fs.existsSync(path)) {
+		fs.readdirSync(path).forEach(function(file, index) {
+			let curPath = path + "/" + file
+			if (fs.lstatSync(curPath).isDirectory()) {
+				deleteFolderRecursive(curPath)
+			} else {
+				fs.unlinkSync(curPath)
+			}
+		})
+		// Fixes some random errors
+		if (noRemoveSelf != true) fs.rmdirSync(path)
+	}
+}
+
+let config: Config = JSON.parse(fs.readFileSync('config.json').toString())
+let tasks = process.argv.slice()
+let llvm = 'LLVM-10.0.0'
+tasks.shift()
+tasks.shift()
+
+if (tasks.length == 0) console.log('No tasks defined')
+
+for (task in tasks) {
+	switch (task) {
+		case 'build':
+			{
+				// Cleanup
+				if (!fs.existsSync(config.tempFolder + '\\tofita')) fs.mkdirSync(config.tempFolder + '\\tofita')
+				deleteFolderRecursive(config.tempFolder + '\\tofita', noRemoveSelf: true)
+				// Create directory tofita/iso/EFI/BOOT/
+				let dirs = [
+					'\\tofita',
+					'\\tofita\\iso',
+					'\\tofita\\iso\\EFI',
+					'\\tofita\\iso\\EFI\\BOOT'
+				]
+				for (dir in dirs)
+					if (!fs.existsSync(config.tempFolder + dir))
+						fs.mkdirSync(config.tempFolder + dir)
+				// Assets
+				let assets = config.tempFolder + '\\tofita\\iso\\TOFITA.DAT'
+				if (fs.existsSync(assets)) fs.unlinkSync(assets)
+
+				// CR3 TRAMPOLINE
+
+				require('child_process').execSync(
+					'..\\Teapot\\nasm-2.14.02\\nasm -f win64 -o ' +
+					config.tempFolder + '/tofita/trampoline.o boot\\loader\\trampoline.asm', { stdio: 'inherit' }
+				)
+
+				// KERNEL
+
+				require('child_process').execSync(
+					[
+						'..\\Teapot\\\(llvm)\\bin\\clang.exe ',
+						'-D versionMajor=' + config.versionMajor + ' ',
+						'-D versionMinor=' + config.versionMinor + ' ',
+						'-D versionName=\\"' + config.versionName + '\\" ',
+						'-D versionTag=\\"' + config.versionTag + '\\" ',
+						'-mtune=nocona -fno-stack-protector -fshort-wchar -w -mno-red-zone ',
+						'-fno-stack-check ',
+						'-fvisibility=hidden ',
+						'-ffreestanding ',
+						'-msse -msse2 -msse3 -mpopcnt -mcx16 -msahf -mprfchw ',
+						'-mno-ssse3 -mno-sse4a -mno-sse4.1 -mno-sse4.2 -mno-sse4 ', // Unsupported
+						'-Iexternal/inc -Iexternal/inc/x86_64 -DEFI_FUNCTION_WRAPPER ',
+						'-m64 -target x86_64-pc-windows-gnu -nostdlib -nodefaultlibs -nostartfiles ',
+						'-DGNU_EFI_USE_MS_ABI -DGNU_EFI_USE_EXTERNAL_STDARG -fno-pic -mcmodel=large ',
+						'-ffast-math -Wno-incompatible-library-redeclaration -Wno-absolute-value -s -w -Wimplicit-function-declaration ',
+						'-Ofast -x c++ -std=c++2a -c kernel/tofita.cpp -o ',
+						config.tempFolder + '/tofita/tofita.obj '
+					].join(''), { stdio: 'inherit' }
+				)
+
+				// TODO get rid of .asm in tofita
+				require('child_process').execSync(
+					'..\\Teapot\\nasm-2.14.02\\nasm -f win64 -o ' +
+					config.tempFolder + '\\tofita\\tofita.asm.obj kernel\\all.asm', { stdio: 'inherit' }
+				)
+
+				require('child_process').execSync(
+					[
+						'..\\Teapot\\\(llvm)\\bin\\lld-link.exe ',
+						'/verbose /WX /MACHINE:X64 /entry:kernelMain /SUBSYSTEM:CONSOLE ',
+						'/BASE:0xffff800000000000 ',
+						config.tempFolder + '/tofita/tofita.asm.obj ',
+						config.tempFolder + '/tofita/tofita.obj ',
+						'/out:',
+						config.tempFolder + '/tofita/tofita.exe'
+					].join(''), { stdio: 'inherit' }
+				)
+
+				// DLL
+
+				require('child_process').execSync(
+					'..\\Teapot\\nasm-2.14.02\\nasm -f win64 -o ' +
+					config.tempFolder + '\\tofita\\tofita64.asm.obj dlls\\tofita32.dll\\tofita64.asm', { stdio: 'inherit' }
+				)
+
+				// TODO 32-bit
+				for (i in dlls.length) {
+
+					// TODO refactor
+					var asm = ' '
+					if (dlls[i] == 'ntdll') asm = config.tempFolder + '/tofita/tofita64.asm.obj '
+
+					require('child_process').execSync(
+						[
+							'..\\Teapot\\\(llvm)\\bin\\clang.exe ',
+							'-m64 -target x86_64-pc-windows-msvc -nostdlib -nodefaultlibs -nostartfiles ',
+							'-ffast-math -Wno-incompatible-library-redeclaration -Wno-absolute-value -s -w ',
+							'-Wimplicit-function-declaration -O2 -c ',
+							'-mtune=nocona -fno-stack-protector -mno-red-zone ',
+							'-fno-stack-check ',
+							'-msse -msse2 -msse3 -mpopcnt -mcx16 -msahf -mprfchw ',
+							'-mno-ssse3 -mno-sse4a -mno-sse4.1 -mno-sse4.2 -mno-sse4 ', // Unsupported
+							'-std=c++2a ',
+							'dlls/' + dlls[i]  + '.dll/' + dlls[i] + '.cpp ',
+							'-o ',
+							config.tempFolder + '/tofita/' + dlls[i] + '_dll.obj'
+						].join(''), { stdio: 'inherit' }
+					)
+
+					require('child_process').execSync(
+						[
+							'..\\Teapot\\\(llvm)\\bin\\lld-link.exe ',
+							'/verbose /DLL /WX /MACHINE:X64 ',
+							[for (dep in deps[i]) config.tempFolder + '/tofita/' + dep + '.lib '].join(''),
+							config.tempFolder + '/tofita/' + dlls[i] + '_dll.obj ',
+							asm,
+							'/out:',
+							config.tempFolder + '/tofita/' + dlls[i] + '.dll'
+						].join(''), { stdio: 'inherit' }
+					)
+				}
+
+				// UEFI
+
+				require('child_process').execSync(
+					[
+						'..\\Teapot\\\(llvm)\\bin\\clang.exe ',
+						'-target x86_64-pc-win32-coff -fno-stack-protector ',
+						'-O2 -x c++ -std=c++2a -fno-stack-protector -fshort-wchar -w -mno-red-zone -Wall -Wextra ',
+						'-DGNU_EFI_USE_MS_ABI -DGNU_EFI_USE_EXTERNAL_STDARG ',
+						'-Iexternal/inc -Iexternal/inc/x86_64 -DEFI_FUNCTION_WRAPPER ',
+						'-D versionMajor=' + config.versionMajor + ' ',
+						'-D versionMinor=' + config.versionMinor + ' ',
+						'-D versionName=\\"' + config.versionName + '\\" ',
+						'-D versionTag=\\"' + config.versionTag + '\\" ',
+
+						'-fshort-wchar -mno-red-zone -Os',
+						' -c ',
+						'boot/uefi/boot.cpp',
+						' -o ',
+						config.tempFolder + '/tofita/miniefi.o'
+					].join(''), { stdio: 'inherit' }
+				)
+
+				require('child_process').execSync(
+					[
+						'..\\Teapot\\\(llvm)\\bin\\lld-link.exe ',
+						'-subsystem:efi_application -nodefaultlib -dll -entry:efi_main ',
+						config.tempFolder + '/tofita/trampoline.o ',
+						config.tempFolder + '/tofita/miniefi.o ',
+						' -out:',
+						config.tempFolder + '/tofita/loader.efi'
+					].join(''), { stdio: 'inherit' }
+				)
+
+				packAssets(config) // Loader
+
+				fs.copyFileSync(
+					config.tempFolder + '\\tofita\\loader.efi',
+					config.tempFolder + '\\tofita\\iso\\EFI\\BOOT\\BOOTX64.EFI')
+				fs.copyFileSync(
+					'assets\\autorun.ico',
+					config.tempFolder + '\\tofita\\iso\\autorun.ico')
+				fs.copyFileSync(
+					'assets\\autorun.inf',
+					config.tempFolder + '\\tofita\\iso\\autorun.inf')
+				// Create floppy image
+				fs.copyFileSync(
+					'..\\Teapot\\mtools\\disk-template.img',
+					config.tempFolder + '\\tofita\\DISK.IMG')
+				for (cmd in [
+					'..\\Teapot\\mtools\\mmd.exe -i ' + config.tempFolder + '\\tofita\\disk.img ::/EFI',
+					'..\\Teapot\\mtools\\mmd.exe -i ' + config.tempFolder + '\\tofita\\disk.img ::/EFI/BOOT',
+					'..\\Teapot\\mtools\\mcopy.exe -i ' + config.tempFolder + '\\tofita\\disk.img ' + config.tempFolder + '\\tofita\\loader.efi ::/EFI/BOOT/BOOTx64.EFI',
+					'..\\Teapot\\mtools\\mcopy.exe -i ' + config.tempFolder + '\\tofita\\disk.img ' + config.tempFolder + '\\tofita\\iso\\TOFITA.DAT ::/TOFITA.DAT',
+					'..\\Teapot\\mtools\\mcopy.exe -i ' + config.tempFolder + '\\tofita\\disk.img assets\\autorun.ico ::/autorun.ico',
+					'..\\Teapot\\mtools\\mcopy.exe -i ' + config.tempFolder + '\\tofita\\disk.img assets\\autorun.inf ::/autorun.inf'
+				]) require('child_process').execSync(
+					cmd, { stdio: 'inherit' }
+				)
+				// Create disk image
+				fs.copyFileSync(
+					config.tempFolder + '\\tofita\\disk.img',
+					config.tempFolder + '\\tofita\\iso\\disk.img')
+				let path = config.tempFolder.split(':').join('')
+				require('child_process').execSync(
+					[
+						'..\\Teapot\\xorriso-1.5.2\\xorriso.exe',
+						'-as mkisofs -o /cygdrive/\(path)/tofita/greenteaos-uefi64.iso -iso-level 3',
+						'-V GreenteaOS /cygdrive/\(path)/tofita/iso -append_partition 2 0xef /cygdrive/\(path)/tofita/DISK.IMG',
+						'-e --interval:appended_partition_2:all:: -no-emul-boot'
+					].join(' '), { stdio: 'inherit' }
+				)
+			}
+		case 'vbox':
+			{
+				require('child_process').execSync(
+					'node tools\\listen.js', { stdio: 'inherit' }
+				)
+			}
+		case 'clang-format':
+			{
+				let clang = '..\\Teapot\\\(llvm)\\bin\\clang-format'
+				let files: [String] = []
+
+				function formatFolderRecursive(path) {
+					if (fs.existsSync(path)) {
+						fs.readdirSync(path).forEach(function(file, index) {
+							let curPath = path + "/" + file
+							if (fs.lstatSync(curPath).isDirectory()) {
+								formatFolderRecursive(curPath)
+							} else {
+								if (curPath.indexOf('external/') == -1)
+								if (curPath.endsWith('.cpp') || curPath.endsWith('.hpp')) {
+									files.push(curPath)
+								}
+							}
+						})
+					}
+				}
+
+				formatFolderRecursive('.')
+
+				require('child_process').execSync(
+					clang + ` -i -style=file ` + files.join(' '), { stdio: 'inherit' }
+				)
+
+				console.log('clang-format ' + files.length + ' files')
+			}
+		case _:
+			console.log('Unknown task', task)
+	}
+}
