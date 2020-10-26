@@ -17,11 +17,12 @@
 	}
 
 	</style>
-	<div id="log">Check Chrome Developer Tools Console</div>
+	<div id="log">[Welcome to the Tofita Web UI!]</div>
 	<script type="text/javascript">
 	;
 	(function() {
 		console.log('[Welcome to the Tofita Web UI!]')
+                                var loginfo = "[Welcome to the Tofita Web UI!]"
 
 		var busy = false
 		setInterval(function() {
@@ -39,7 +40,14 @@
 				.then((data) => {
 					// Dev Tools don't filter on single .log
 					const lines = ('' + data).split('\n')
-					for (const line of lines) console.log(line);
+					for (const line of lines) {
+                                                                                	console.log(line);
+                                                                                	loginfo += "<br>" + line;
+                                                                                }
+                                                                                var targetdiv = document.getElementById("log");
+                                                                                targetdiv.innerHTML = loginfo;
+                                                                                var ele = document.getElementById("body");
+                                                                                window.scrollTo(0, document.body.scrollHeight);
 					busy = false
 				})
 				.catch((error) => {
