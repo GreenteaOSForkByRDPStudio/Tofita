@@ -79,9 +79,9 @@ Otherwise `C:` is used to store builds by default.
 
 #### Install Hexa
 
-You also need to install [Hexa compiler](https://github.com/hexalang/hexa#unstable).
+You also need to install [Hexa compiler](https://github.com/GreenteaOSForkByRDPStudio/hexa).
 
-Currently you will build Hexa manually too. Download [this](https://github.com/hexalang/hexa/archive/kawaii.zip) and extract contents of `hexa-kawaii` into `C:\Hexa`, so you have `C:\Hexa\hexa.cmd`.
+Currently you will build Hexa manually too. Download [this](https://github.com/GreenteaOSForkByRDPStudio/hexa/archive/kawaii.zip) and extract contents of `hexa-kawaii` into `C:\Hexa`, so you have `C:\Hexa\hexa.cmd`.
 
 Install [node.js LTS](https://nodejs.org/en/download/).
 
